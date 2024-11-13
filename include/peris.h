@@ -5,6 +5,7 @@
 #ifndef PERIS_H
 #define PERIS_H
 
+#include <limits>
 #include <string>
 
 #ifndef __ssize_t_defined

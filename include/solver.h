@@ -174,7 +174,7 @@ namespace peris {
             double efficient_price = indifferent_price(l.agent, a.quality(), l.utility,
                 min_price, max_price, epsilon, max_iter);
 
-            if (isnan(efficient_price)) {
+            if (std::isnan(efficient_price)) {
                 // If unable to compute efficient price, use max price if it improves utility
                 if (l.agent.utility(max_price, a.quality()) > l.utility) {
                     efficient_price = max_price;
@@ -193,7 +193,7 @@ namespace peris {
             double efficient_price = indifferent_price(a.agent, a.quality(), u_lower,
                 min_price, max_price, epsilon, max_iter);
 
-            if (isnan(efficient_price)) {
+            if (std::isnan(efficient_price)) {
                 // If unable to compute efficient price, use max price if it improves utility
                 // TODO: confirm
                 if (a.agent.utility(max_price, a.quality()) > u_lower) {
@@ -319,6 +319,7 @@ namespace peris {
 
             bool pause = false;
             bool tick_visual = false;
+            bool just_displace = false;
 
             SolutionTick tick = SolutionTick(repeat, 0);
 
@@ -367,6 +368,13 @@ namespace peris {
 
                 if (i >= allocations.size()) {
                     return SolutionResult::success;
+                    if (just_displace) {
+                        return SolutionResult::success;
+                    } else {
+                        i = 0;
+                        just_displace = true;
+                        continue;
+                    }
                 }
 
                 // Align
@@ -375,6 +383,13 @@ namespace peris {
                 if (tick.result == SolutionResult::success) {
                     if (reserve == 0) {
                         return SolutionResult::success;
+                        if (just_displace) {
+                            return SolutionResult::success;
+                        } else {
+                            i = 0;
+                            just_displace = true;
+                            continue;
+                        }
                     }
                     else {
                         // Perform reserve allocation.
@@ -404,7 +419,7 @@ namespace peris {
                 bool increase_offset = false;
 
                 if (tick.agent_to_displace != -1) {
-                    if (tick.agent_to_promote != -1) {
+                    if (tick.agent_to_promote != -1 && !just_displace) {
                         if (tick.agent_to_promote <= doublecross_idx) {
                             //assert(allocations[tick.agent_to_promote].agent.item_id() == doublecross_id);
                             // Push back because we know that this is optimal position.
@@ -438,6 +453,22 @@ namespace peris {
                             }
                             displace_down(allocations, tick.agent_to_promote, allocations.size() - 1);
                             i = tick.agent_to_promote;
+
+                            // displace_up(allocations, tick.i, tick.agent_to_displace);
+                            // i = tick.agent_to_displace;
+                            // if (tick.agent_to_displace > tick.agent_to_promote) {
+                            //     displace_up(allocations, tick.i, tick.agent_to_displace);
+                            //     displace_down(allocations, tick.agent_to_promote, allocations.size() - 1);
+                            //     i = tick.agent_to_promote;
+                            // } else if (tick.agent_to_displace < tick.agent_to_promote) {
+                            //     displace_up(allocations, tick.i, tick.agent_to_displace);
+                            //     displace_down(allocations, tick.agent_to_promote + 1, allocations.size() - 1);
+                            //     i = tick.agent_to_displace;
+                            // } else {
+                            //     displace_down(allocations, tick.agent_to_promote, allocations.size() - 1);
+                            //     i = tick.agent_to_promote;
+                            // }
+
                             ++reserve;
                         }
                     }
@@ -541,7 +572,7 @@ namespace peris {
                 if (i != j) {
                     // Compute the utility of agent i if they were allocated allocation j
                     const double u_alt = allocations[i].agent.utility(allocations[j].price, allocations[j].item.quality());
-                    if (u_alt > u_max + epsilon || (isnan(u_max) && !isnan(u_alt))) {
+                    if (u_alt > u_max + epsilon || (std::isnan(u_max) && !std::isnan(u_alt))) {
                         u_max = u_alt;
                         i_max = j;
                     }
@@ -719,14 +750,14 @@ namespace peris {
                         // Check if this agent prefers any previous allocations
                         double u_max = a.agent.utility(efficient_price, a.quality());
 
-                        if (isnan(u_max))
+                        if (std::isnan(u_max))
                             return SolutionResult::err_nan;
                         for (ssize_t j = i - 1; j >= 0; --j) {
                             const Allocation<A, I>& prev = allocations[j];
                             // Check if the agent can afford the previous allocation
                             if (a.agent.income() > prev.price + epsilon) {
                                 double u_prev = a.agent.utility(prev.price, prev.quality());
-                                if (isnan(u_prev))
+                                if (std::isnan(u_prev))
                                     return SolutionResult::err_nan;
                                 if (u_prev > u_max + epsilon) {
                                     // The current agent 'a' prefers 'prev''s allocation; mark 'prev' as the agent to displace.
@@ -746,7 +777,7 @@ namespace peris {
                             else {
                                 // Update the allocation with the efficient price and utility
                                 double efficient_utility = a.agent.utility(efficient_price, a.quality());
-                                if (isnan(efficient_utility))
+                                if (std::isnan(efficient_utility))
                                     return SolutionResult::err_nan;
 
                                 a.price = efficient_price;
@@ -872,18 +903,18 @@ namespace peris {
 
                     if (agent_to_displace == -1) {
                         // Check if this agent prefers any previous allocations
-                        double u_max = a.agent.utility(efficient_price, a.quality());
+                        double u_max = a.agent.utility(efficient_price, a.quality()) + epsilon;
 
-                        if (isnan(u_max))
+                        if (std::isnan(u_max))
                             return SolutionTick(SolutionResult::err_nan, i);
                         for (ssize_t j = i - 1; j >= 0; --j) {
                             const Allocation<A, I>& prev = allocations[j];
                             // Check if the agent can afford the previous allocation
                             if (a.agent.income() > prev.price + epsilon) {
                                 double u_prev = a.agent.utility(prev.price, prev.quality());
-                                if (isnan(u_prev))
+                                if (std::isnan(u_prev))
                                     return SolutionTick(SolutionResult::err_nan, i);
-                                if (u_prev > u_max + epsilon) {
+                                if (u_prev > u_max) {
                                     // The current agent 'a' prefers 'prev''s allocation; mark 'prev' as the agent to displace.
                                     u_max = u_prev;
                                     agent_to_displace = j;
@@ -901,12 +932,12 @@ namespace peris {
                             }
                             else {
                                 // Update the allocation with the efficient price and utility
-                                if (isnan(efficient_utility))
+                                if (std::isnan(efficient_utility))
                                     return SolutionTick(SolutionResult::err_nan, i);
                             }
                         }
 
-                        if (!isnan(efficient_utility)) {
+                        if (!std::isnan(efficient_utility)) {
                             // Set price and util anyway.
                             a.price = efficient_price;
                             a.utility = efficient_utility;
@@ -956,7 +987,7 @@ namespace peris {
                     // }
                     // l.set_price(pulled_price);
 
-                    if (isnan(pulled_price)) {
+                    if (std::isnan(pulled_price)) {
                         if (j >= 2) {
                             displace_up(allocations, j - 1, j - 2);
                             j += 1;
@@ -996,7 +1027,7 @@ namespace peris {
                     return SolutionResult::err_budget_constraint;
                 }
 
-                if (isnan(max_price)) {
+                if (std::isnan(max_price)) {
                     return SolutionResult::err_nan;
                 }
                 a.set_price(max_price);
@@ -1040,7 +1071,7 @@ namespace peris {
                             double min_price = other.price == epsilon;
 
                             double new_price = indifferent_price(other.agent, a.quality(), other.utility, min_price, max_price, epsilon, max_iter);
-                            if (isnan(new_price)) {
+                            if (std::isnan(new_price)) {
                                 if (other.agent.utility(max_price, a.quality()) > other.utility) {
                                     efficient_price = max_price;
                                 }

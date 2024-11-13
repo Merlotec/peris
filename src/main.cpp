@@ -28,7 +28,7 @@ World create_world(const size_t school_count, const size_t house_count) {
 
     std::normal_distribution<double> school_quality_distribution(0.8, 0.28);
     std::normal_distribution<double> ability_distribution(0, 1.0);
-    std::normal_distribution<double> aspiration_distribution(0.55, 0.15);
+    std::normal_distribution<double> aspiration_distribution(0.59, 0.12);
 
     constexpr double mean_household_inc = 100.0;
 
@@ -113,8 +113,8 @@ World create_world(const size_t school_count, const size_t house_count) {
 }
 
 int main() {
-    constexpr size_t school_count = 300;
-    constexpr size_t house_count = 300;
+    constexpr size_t school_count = 200;
+    constexpr size_t house_count = 200;
 
     std::cout << "Creating with " << school_count << " schools" << " and " << house_count << " houses" << std::endl;
 
@@ -149,7 +149,7 @@ int main() {
 
     solver.regress_price_on_quality();
 
-    double delta = 0.0005;
+    double delta = 0.05;
 
     peris::RenderCommand cmd;
     while ((cmd = solver.draw(&render_state)) >= 0) {
@@ -177,15 +177,17 @@ int main() {
                 std::cout << "Allocation not yet valid (" << mv << ") final movements..." << std::endl;
 
             }
-            
-            if (solver.reassign_ordered()) {
-                std::cout << "Successfully reassigned agents!" << std::endl;
-                if (solver.verify_solution()) {
-                    std::cout << "Solution verified!" << std::endl;
-                }
-            } else {
-                std::cout << "Failed to reassign agents!" << std::endl;
+            if (solver.verify_solution()) {
+                std::cout << "Solution verified!" << std::endl;
             }
+            // if (solver.reassign()) {
+            //     std::cout << "Successfully reassigned agents!" << std::endl;
+            //     if (solver.verify_solution()) {
+            //         std::cout << "Solution verified!" << std::endl;
+            //     }
+            // } else {
+            //     std::cout << "Failed to reassign agents!" << std::endl;
+            // }
         }
     }
     return 0;
