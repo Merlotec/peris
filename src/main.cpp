@@ -127,18 +127,24 @@ int main() {
     }
 
 
-    auto solver = world.solver();
+
 
     // Setup render window to draw visuals.
     peris::RenderState<Household, House> render_state{};
 
+    //auto solver = world.solver();
+
+    std::vector<peris::Allocation<Household, House>> allocations{};
+    peris::Solver<Household, House>::align_right(world.households, world.houses, allocations, 0, &render_state);
+    auto solver = peris::Solver(allocations);
+
     solver.draw(&render_state);
 
-    auto pres = solver.solve(&render_state);
+    //auto pres = solver.solve(&render_state);
 
-    std::cout << "Solver finished with code " << pres << std::endl;
+    //std::cout << "Solver finished with code " << pres << std::endl;
 
-    if (solver.verify_solution(0.001)) {
+    if (solver.verify_solution()) {
         std::cout << "Verification successful" << std::endl;
     }
     else {

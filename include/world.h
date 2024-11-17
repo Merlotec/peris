@@ -90,11 +90,12 @@ struct House {
 };
 
 class World {
+public:
+
     std::vector<Household> households;
     std::vector<School> schools;
     std::vector<House> houses;
 
-public:
     World(std::vector<Household> households, std::vector<School> schools, std::vector<House> houses) : households(households), schools(schools), houses(houses) {}
 
     /// Returns a solver object from the data in this world. This is used to solve for the optimal prices.
