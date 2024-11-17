@@ -32,6 +32,12 @@ namespace peris {
         repeat = 2,
     };
 
+    template <typename A>
+    struct AgentItem {
+        A agent;
+        size_t lower_bound;
+    };
+
     struct SolutionTick {
         ssize_t agent_to_promote = -1;
         ssize_t agent_to_displace = -1;
@@ -166,6 +172,108 @@ namespace peris {
             // After the loop, 'free_agent' holds the agent originally at position 'a',
             // which has already been moved to position 'b', so it can be discarded.
         }
+
+        static void displace_down_in_phase(std::vector<Allocation<A, I> > &allocations, size_t a, size_t b) {
+            assert(b > a); // Ensure that the destination index 'b' is greater than the source index 'a'.
+
+            // If either agent is already out of phase this will not work.
+            assert(!allocations[a].out_of_phase && !allocations[b].out_of_phase);
+
+            // Temporarily store the agent at position 'b' as it will be overridden.
+            auto free_agent = allocations[b].agent;
+
+            // Move the agent from position 'a' to position 'b'.
+            allocations[b].agent = allocations[a].agent;
+            allocations[b].recalculate_utility(); // Update utility after changing the agent.
+            // Note, allocation b may or may not be in phase, so we make it out of phase here, but if the price is adjusted
+            // outside of this function, then it may be restored to an in phase state.
+            allocations[b].out_of_phase = true;
+
+            // Shift agents from position 'b-1' down to 'a' by one position.
+            // This loop moves each agent into the position of the next agent.
+            for (ssize_t i = b - 1; i >= (ssize_t) a; --i) {
+
+                // Only shift down if the agent is in phase.
+                if (!allocations[i].out_of_phase) {
+                    // Store the current agent to be moved in the next iteration.
+                    auto agent_buffer = allocations[i].agent;
+
+                    // Move the 'free_agent' into the current position.
+                    allocations[i].agent = free_agent;
+                    allocations[i].recalculate_utility(); // Update utility after changing the agent.
+                    allocations[i].out_of_phase = true; // Make the agent out of phase as we can no longer assert that it is indifferent to the allocation below.
+                    allocations[i].doublecross = false;
+                    // Update 'free_agent' for the next iteration.
+                    free_agent = agent_buffer;
+                }
+            }
+            // After the loop, 'free_agent' holds the agent originally at position 'a',
+            // which has already been moved to position 'b', so it can be discarded.
+        }
+
+        /// Move agent at a to allocation b, ensuring all other agents are satisfied with their allocations.
+        static void displace_phased(std::vector<Allocation<A, I> > &allocations, size_t a, size_t b) {
+            assert(b > a); // Ensure that the destination index 'b' is greater than the source index 'a'.
+
+            // If either agent is already out of phase this will not work.
+            assert(!allocations[b].out_of_phase);
+
+            // Temporarily store the agent at position 'b' as it will be overridden.
+            auto free_agent = allocations[b].agent;
+
+            // Move the agent from position 'a' to position 'b'.
+            allocations[b].agent = allocations[a].agent;
+            allocations[b].recalculate_utility(); // Update utility after changing the agent.
+            // Note, allocation b may or may not be in phase, so we make it out of phase here, but if the price is adjusted
+            // outside of this function, then it may be restored to an in phase state.
+            allocations[b].out_of_phase = true;
+
+            // We now need to shift in such an order that we fill the gap opened by moving b up.
+            // To do this we use the phase info from the existing allocations to tell us which way we are allowed to shift and maintain indifference.
+
+            // Shift agents from position 'b-1' down to 'a' by one position.
+            // This loop moves each agent into the position of the next agent.
+            // We start by shifting down b to b-1 (since that is our only option).
+            assert(!allocations[b-1].out_of_phase);
+            size_t i = b - 1;
+            while (i != a) {
+                // Store the current agent to be moved in the next iteration.
+                auto agent_buffer = allocations[i].agent;
+
+                // Move the 'free_agent' into the current position.
+                allocations[i].agent = free_agent;
+                allocations[i].recalculate_utility(); // Update utility after changing the agent.
+                bool out_of_phase = allocations[i].out_of_phase;
+                allocations[i].out_of_phase = !out_of_phase; // Switch the phase of the agent.
+                // Update 'free_agent' for the next iteration.
+                free_agent = agent_buffer;
+                // Only shift down if the agent is in phase.
+                if (out_of_phase) {
+                    ++i;
+                } else {
+                    // Next in phase might be a jump down...
+                    assert(i > a);
+                    // Find the next in phase agent below:
+                    ssize_t j = i - 1;
+                    while (j >= 0 && allocations[j].out_of_phase) {
+                        --j;
+                    }
+                    assert(j >= 0);
+
+                    if (j < a) {
+                        // We need to choose an out of phase agent because we want to move up.
+                        ++j;
+                    }
+
+                    i = j;
+                }
+            }
+            // Now we are at a, so we allocate the last free agent to position a.
+            allocations[a].agent = free_agent;
+            allocations[a].recalculate_utility();
+            allocations[a].out_of_phase = !allocations[a].out_of_phase;
+        }
+
 
         static double calculate_efficient_price(const Allocation<A, I> &l, const Allocation<A, I> &a,
                                                 const double epsilon, const int max_iter) {
@@ -604,125 +712,213 @@ namespace peris {
         // }
 
         // Note: takes vectors as references, so need to clone them before calling.
-        static void align_right(std::vector<A> &agents, std::vector<I> &items,
+        static void align_right(std::vector<A> &ags, std::vector<I> &items,
                                                           std::vector<Allocation<A, I> > &allocations, size_t i,
                                                           RenderState<A, I> *render_state, double epsilon = 1e-5,
                                                           int max_iter = 200) {
 
-            assert(agents.size() == items.size());
+            assert(ags.size() == items.size());
+
+            std::vector<AgentItem<A>> agents{};
+            agents.reserve(ags.size());
+
+            for (auto a : ags) {
+                agents.push_back({.agent = a, .lower_bound = 0});
+            }
 
             if (items.empty()) {
                 return;
             }
-            // If we need to allocate the first agent, we have no previous agent to compare it to so we have to do this manually.
-            if (i == 0) {
-                double p0 = 0.0;
-                double q0 = items[0].quality();
-                if (items.size() == 1) {
-                    // Corner case with 1 agent.
-                    allocations.push_back({
-                        .item = items[0], .agent = agents[0], .price = p0,
-                        .utility = agents[0].utility(p0, q0)
-                    });
-                    agents.erase(agents.begin());
-                    return;
-                }
-
-                double q1 = items[1].quality();
-                double best_p = DBL_MAX;
-                size_t best_j = -1;
-                for (size_t j = 0; j < agents.size(); ++j) {
-                    assert(agents[j].income() > p0);
-                    double u_0 = agents[j].utility(p0, q0);
-                    double next_p = indifferent_price(agents[j], q1, u_0, p0, agents[j].income(), epsilon, max_iter);
-                    assert(!std::isnan(next_p));
-                    if (next_p < best_p) {
-                        best_p = next_p;
-                        best_j = j;
-                    }
-                }
-
-                allocations.push_back({
-                    .item = items[0], .agent = agents[best_j], .price = p0,
-                    .utility = agents[best_j].utility(p0, q0)
-                });
-                agents.erase(agents.begin() + best_j);
-
-                i = 1;
-            }
 
             // The first allocation is the current furthest allocated point (not the next point to allocate) as we are right allocating.
-            double p0 = allocations[i - 1].price;
-            double q0 = allocations[i - 1].quality();
+            double p0 = i == 0 ? 0.0 : allocations[i - 1].price;
+            double q0 = i == 0 ? 0.0 : allocations[i - 1].quality();
 
-            for (; i < items.size(); ++i) {
-                double q1 = items[i].quality();
-                // Note we are aligning previous allocation to this allocation (hence right shift).
-                // For all remaining agents, calc steepest slope.
-                double best_p = DBL_MAX;
-                size_t best_j = -1;
+            size_t head = i;
 
-                for (size_t j = 0; j < agents.size(); ++j) {
-                    assert(agents[j].income() > p0);
-                    double u_0 = agents[j].utility(p0, q0);
-                    double next_p = indifferent_price(agents[j], q1, u_0, p0, agents[j].income(), epsilon, max_iter);
-                    assert(!std::isnan(next_p));
-                    if (next_p < best_p) {
-                        best_p = next_p;
-                        best_j = j;
-                    }
+            // Write as while loop so that we dont have automatic incrementing and can set the unsingned iterator to 0 later in the loop.
+            while (i < items.size()) {
+                if (i > head) {
+                    head = i;
                 }
 
-                // We choose the higher price for this agent (as we have made it indifferent to the lower agent.
-                allocations.push_back({
-                    .item = items[i], .agent = agents[best_j], .price = best_p,
-                    .utility = agents[best_j].utility(best_p, q1)
-                });
-                agents.erase(agents.begin() + best_j);
+                // If we need to allocate the first agent, we have no previous agent to compare it to so we have to do this manually.
+                if (i == 0) {
+                    double p_start = 0.0;
+                    double q_start = items[0].quality();
+                    if (items.size() == 1) {
+                        // Corner case with 1 agent.
+                        allocations.push_back({
+                            .item = items[0], .agent = agents[0].agent, .price = p_start,
+                            .utility = agents[0].agent.utility(p_start, q_start)
+                        });
+                        agents.erase(agents.begin());
+                        return;
+                    }
 
-                // Update base
-                p0 = best_p;
-                q0 = q1;
+                    double q1 = items[1].quality();
+                    double best_p = DBL_MAX;
+                    size_t best_j = -1;
+                    for (size_t j = 0; j < agents.size(); ++j) {
+                        if (agents[j].lower_bound <= i) {
+                            assert(agents[j].agent.income() > p_start);
+                            double u_0 = agents[j].agent.utility(p_start, q_start);
+                            double next_p = indifferent_price(agents[j].agent, q1, u_0, p_start, agents[j].agent.income(), epsilon, max_iter);
+                            assert(!std::isnan(next_p));
+                            if (next_p < best_p) {
+                                best_p = next_p;
+                                best_j = j;
+                            }
+                        }
+                    }
+                    auto a = agents[best_j].agent;
+                    a.init = 0;
+                    allocations.push_back({
+                        .item = items[0], .agent = agents[best_j].agent, .price = p_start,
+                        .utility = agents[best_j].agent.utility(p_start, q_start)
+                    });
+                    agents.erase(agents.begin() + best_j);
 
-                double p_dc = best_p;
-                ssize_t i_dc = -1;
-                if (allocations.size() > 1) {
-                    for (size_t w = 0; w < allocations.size() - 1; ++w) {
-                        if (allocations[w].agent.income() > best_p) {
-                            if (allocations[w].agent.utility(p_dc, q1) > allocations[w].utility) {
-                                // !!DOUBLECROSS!! prefers next allocation (i.e. this IC crosses older IC), calc max price.
-                                double p_other = indifferent_price(allocations[w].agent, q1, allocations[w].utility, best_p, allocations[w].agent.income() - epsilon, epsilon, max_iter);
-                                if (!std::isnan(p_other) && p_other > p_dc) {
-                                    p_dc = p_other;
-                                    i_dc = w;
+                    p0 = p_start;
+                    q0 = q_start;
+                } else {
+                    double q1 = items[i].quality();
+                    // Note we are aligning previous allocation to this allocation (hence right shift).
+                    // For all remaining agents, calc steepest slope.
+                    double best_p = DBL_MAX;
+                    size_t best_j = -1;
+
+                    for (size_t j = 0; j < agents.size(); ++j) {
+                        // Check if we have added a lower bound to this agent's potential allocation.
+                        if (agents[j].lower_bound <= i) {
+                            assert(agents[j].agent.income() > p0);
+                            double u_0 = agents[j].agent.utility(p0, q0);
+                            double next_p = indifferent_price(agents[j].agent, q1, u_0, p0, agents[j].agent.income(), epsilon, max_iter);
+                            assert(!std::isnan(next_p));
+                            if (next_p < best_p) {
+                                best_p = next_p;
+                                best_j = j;
+                            }
+                        }
+                    }
+
+                    // We choose the higher price for this agent (as we have made it indifferent to the lower agent).
+                    auto a = agents[best_j].agent;
+                    a.init = i;
+                    allocations.push_back({
+                        .item = items[i], .agent = a, .price = best_p,
+                        .utility = agents[best_j].agent.utility(best_p, q1)
+                    });
+                    agents.erase(agents.begin() + best_j);
+
+                    // Update base
+                    p0 = best_p;
+                    q0 = q1;
+
+                    double p_dc = best_p;
+                    ssize_t i_dc = -1;
+                    if (allocations.size() > 1) {
+                        for (size_t w = 0; w < allocations.size() - 1; ++w) {
+                            if (allocations[w].agent.income() > best_p) {
+                                if (allocations[w].agent.utility(p_dc, q1) > allocations[w].utility) {
+                                    // !!DOUBLECROSS!! prefers next allocation (i.e. this IC crosses older IC), calc max price.
+                                    double p_other = indifferent_price(allocations[w].agent, q1, allocations[w].utility, best_p, allocations[w].agent.income() - epsilon, epsilon, max_iter);
+                                    if (!std::isnan(p_other) && p_other > p_dc) {
+                                        p_dc = p_other;
+                                        i_dc = w;
+                                    }
                                 }
                             }
                         }
                     }
+
+                    auto rc = render_state->draw_allocations(allocations, i);
+                    if (rc == RenderCommand::terminate) {
+                        return;
+                    }
+
+                    if (p_dc > best_p && i_dc >= 0) {
+
+                        // If there are any agents with their budget constraints between the old and new prices, this cannot work
+                        // as there will be no valid allocation for them.
+                        // However, it can be shown that in this circumstance, we are necessarily better off performing an invalidating reorder
+                        // and maintaining right shift (instead of a static reorder and left shifting down to the DC agent).
+                        bool invalidate_reorder = false;//allocations[i_dc].out_of_phase;
+                        if (!invalidate_reorder) {
+                            for (size_t j = 0; j < agents.size(); ++j) {
+                                if (agents[j].agent.income() < p_dc) {
+                                    invalidate_reorder = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (invalidate_reorder) {
+                            // Free agent has income lower than new price. We cannot use the usual method of allocation.
+                            // We must reallocate all agents below.
+
+                            assert(allocations.size() - 1 == i);
+                            for(size_t w = i_dc + 1; w <= i; ++w) {
+                                agents.push_back({.agent = allocations.back().agent, .lower_bound = 0});
+                                allocations.pop_back();
+                            }
+
+                            assert(allocations.size() - 1 == i_dc);
+                            // Now remove dc agent and add lower bound for it.
+                            // This lower bound prevents it from being allocated to its old position (because we know it would prefer higher).
+                            // If the agents are out of phase we have to keep removing until they are in phase.
+                            auto a = allocations[i_dc].agent;
+                            a.lb = i + 1;
+                            agents.push_back({.agent = a, .lower_bound = i + 1});
+                            allocations.erase(allocations.begin() + i_dc);
+
+                            ssize_t z = i_dc - 1;
+                            while (allocations[z].out_of_phase && z >= 0) {
+                                agents.push_back({.agent = allocations[z].agent, .lower_bound = 0}); // TODO: may lower bound of agent that should have non zero lb.
+                                allocations.erase(allocations.begin() + z);
+                                --z;
+                            }
+
+
+                            ssize_t next_i = std::min(z + 1, (ssize_t)i_dc);
+                            assert(next_i == allocations.size());
+                            // We must adjust q0 and p0 appropriately.
+                            if (next_i > 0) {
+                                p0 = allocations[next_i - 1].price;
+                                q0 = allocations[next_i - 1].quality();
+                            } else {
+                                // We wont actually use these values to allocate if we are at 0.
+                                p0 = 0.0;
+                                q0 = 0.0;
+                            }
+
+                            // Reallocate from the doublecrossing agent, because we have now set a lower bound on this agent higher than this value (so we know a new agent must be allocated here).
+                            i = next_i;
+                            continue;
+                        } else {
+                            // We want to remove this allocation and downshift from the intersection point.
+                            // By removing this allocation, we still keep optimum allocation!
+                            // However, agents are now forward allocated.
+
+                            // Determines a valid arrangement so that we can move the doublecrossing agent up.
+                            displace_phased(allocations, i_dc, i);
+
+                            // Agent that has been shifted up:
+                            allocations[i].set_price(p_dc);
+                            // Update the price used for allocating the next agent.
+                            p0 = p_dc;
+
+                            // Restore the phase of the shifted up agent, because we have chosen the price to make it indifferent to before,
+                            // and we know that the previous allocation was in phase (i_dc was indifferent to i_dc - 1), so that means that a higher up allocation is necessarily in phase (i is indifferent to i_dc - 1)
+                            // We have not disturbed any agents below the doublecrossing agent.
+                            allocations[i].out_of_phase = false;
+
+                            allocations[i].doublecross = true;
+                        }
+                    }
                 }
 
-                if (p_dc > best_p && i_dc >= 0) {
-
-                    // If there are any agents with their budget constraints between the old and new prices, this cannot work
-                    // as there will be no valid allocation for them.
-                    // However, it can be shown that in this circumstance, we are necessarily better off performing an invalidating reorder
-                    // and maintaining right shift (instead of a static reorder and left shifting down to the DC agent).
-
-
-                    // We want to remove this allocation and downshift from the intersection point.
-                    // By removing this allocation, we still keep optimum allocation!
-                    // However, agents are now forward allocated.
-
-                    displace_down(allocations, i_dc, i);
-
-                    // Agent that has been shifted up:
-                    allocations[i].set_price(p_dc);
-                }
-
-                auto rc = render_state->draw_allocations(allocations, i);
-                if (rc == RenderCommand::terminate) {
-                    return;
-                }
+                ++i;
             }
 
         }

@@ -49,6 +49,9 @@ namespace peris {
         /// If it allocated here we know we would experience an infinite loop.
         bool doublecross = false;
 
+        /// Out of phase agents are not indifferent to the agent below, and hence cannot be shifted down allocation one while maintaining the same utility.
+        bool out_of_phase = false;
+
         double favourite = 0;
 
         double quality() const {

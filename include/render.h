@@ -409,6 +409,7 @@ namespace peris {
                 info_ss << "u =" << hovered_allocation.utility << std::endl;
                 info_ss << "ur=" << hovered_allocation.agent.utility(hovered_allocation.price, hovered_allocation.quality()) << std::endl;
                 info_ss << "dc=" << hovered_allocation.doublecross << std::endl;
+                info_ss << "ph=" << hovered_allocation.out_of_phase << std::endl;
                 info_ss << "fv=" << hovered_allocation.favourite << std::endl;
                 // You can add more agent-specific information here
 

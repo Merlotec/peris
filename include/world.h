@@ -25,6 +25,9 @@ struct Household {
 
     double contribution;
 
+    size_t lb = 0;
+    size_t init = 0;
+
     int item_id() const {
         return id;
     }
@@ -41,7 +44,7 @@ struct Household {
     }
 
     std::string debug_info() const {
-        return "y=" + std::to_string(inc) + "\nas=" + std::to_string(aspiration) + "\nab=" + std::to_string(ability);
+        return "y=" + std::to_string(inc) + "\nas=" + std::to_string(aspiration) + "\nab=" + std::to_string(ability) + "\nlb=" + std::to_string(lb) + "\nin=" + std::to_string(init);
     }
 };
 
@@ -66,6 +69,8 @@ struct House {
     /// Store quality here to improve cache locality and avoid having to lookup quality from school.
     /// MUST remember to update this every time the school is changed.
     double school_quality;
+
+
 
     bool is_valid() const {
         return school >= -1;
