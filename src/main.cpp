@@ -144,7 +144,7 @@ int main() {
 
     //std::cout << "Solver finished with code " << pres << std::endl;
 
-    if (solver.verify_solution()) {
+    if (peris::Solver<Household, House>::verify_solution(allocations)) {
         std::cout << "Verification successful" << std::endl;
     }
     else {
@@ -183,7 +183,7 @@ int main() {
                 std::cout << "Allocation not yet valid (" << mv << ") final movements..." << std::endl;
 
             }
-            if (solver.verify_solution()) {
+            if (peris::Solver<Household, House>::verify_solution(prev)) {
                 std::cout << "Solution verified!" << std::endl;
             }
             // if (solver.reassign()) {

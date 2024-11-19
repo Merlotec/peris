@@ -212,7 +212,7 @@ namespace peris {
         }
 
         /// Move agent at a to allocation b, ensuring all other agents are satisfied with their allocations.
-        static void displace_phased(std::vector<Allocation<A, I> > &allocations, size_t a, size_t b) {
+        static void displace_phased(std::vector<Allocation<A, I> > &allocations, size_t a, size_t b, double epsilon) {
             assert(b > a); // Ensure that the destination index 'b' is greater than the source index 'a'.
 
             // If either agent is already out of phase this will not work.
@@ -220,6 +220,7 @@ namespace peris {
 
             // Temporarily store the agent at position 'b' as it will be overridden.
             auto free_agent = allocations[b].agent;
+            double free_utility = allocations[b].utility;
 
             // Move the agent from position 'a' to position 'b'.
             allocations[b].agent = allocations[a].agent;
@@ -239,14 +240,19 @@ namespace peris {
             while (i != a) {
                 // Store the current agent to be moved in the next iteration.
                 auto agent_buffer = allocations[i].agent;
+                double utility_buffer = allocations[i].utility;
 
                 // Move the 'free_agent' into the current position.
                 allocations[i].agent = free_agent;
                 allocations[i].recalculate_utility(); // Update utility after changing the agent.
+                // If this does not hold then our shifting has failed to preserve the ICs.
+                assert(std::abs(allocations[i].utility - free_utility) < epsilon);
+
                 bool out_of_phase = allocations[i].out_of_phase;
                 allocations[i].out_of_phase = !out_of_phase; // Switch the phase of the agent.
                 // Update 'free_agent' for the next iteration.
                 free_agent = agent_buffer;
+                free_utility = utility_buffer;
                 // Only shift down if the agent is in phase.
                 if (out_of_phase) {
                     ++i;
@@ -263,6 +269,9 @@ namespace peris {
                     if (j < a) {
                         // We need to choose an out of phase agent because we want to move up.
                         ++j;
+                        assert (allocations[j].out_of_phase);
+                    } else {
+                        assert (!allocations[j].out_of_phase);
                     }
 
                     i = j;
@@ -271,6 +280,7 @@ namespace peris {
             // Now we are at a, so we allocate the last free agent to position a.
             allocations[a].agent = free_agent;
             allocations[a].recalculate_utility();
+            assert(std::abs(allocations[a].utility - free_utility) < epsilon);
             allocations[a].out_of_phase = !allocations[a].out_of_phase;
         }
 
@@ -641,75 +651,91 @@ namespace peris {
             }
         }
 
-        // static std::vector<Allocation<A, I> > align_slope(std::vector<A> agents, std::vector<I> items,
-        //                                                   RenderState<A, I> *render_state, double epsilon = 1e-5,
-        //                                                   int max_iter = 200) {
-        //     // start first alloc at 0.
-        //     double p0 = 0.0;
-        //     double q0 = items[0].quality();
-        //
-        //     std::vector<Allocation<A, I> > allocations;
-        //     allocations.reserve(agents.size());
-        //
-        //     for (size_t i = 0; i < items.size() - 1; ++i) {
-        //         double q1 = items[i + 1].quality();
-        //         // For all remaining agents, calc steepest slope.
-        //         double best_p = DBL_MAX;
-        //         size_t best_j = -1;
-        //
-        //         for (size_t j = 0; j < agents.size(); ++j) {
-        //             assert(agents[j].income() > p0);
-        //             double u_0 = agents[j].utility(p0, q0);
-        //             double next_p = indifferent_price(agents[j], q1, u_0, p0, agents[j].income(), epsilon, max_iter);
-        //             assert(!std::isnan(next_p));
-        //             if (next_p < best_p) {
-        //                 best_p = next_p;
-        //                 best_j = j;
-        //             }
-        //         }
-        //
-        //         // Check if any previous agent prefers this allocation.
-        //         // If so, find the agent with the highest indifferent price.
-        //         double p_dc = -1.0;
-        //         size_t i_dc = 0;
-        //         if (allocations.size() > 1) {
-        //             for (size_t w = 0; w < allocations.size() - 1; ++w) {
-        //                 if (allocations[w].agent.income() > best_p) {
-        //                     if (allocations[w].agent.utility(best_p, q1) > allocations[w].utility) {
-        //                         // !!DOUBLECROSS!! prefers next allocation (i.e. this IC crosses older IC), calc max price.
-        //                         double p_other = indifferent_price(allocations[w].agent, q1, allocations[w].utility,
-        //                                                            best_p, epsilon, max_iter);
-        //
-        //                         if (!std::isnan(p_other) && p_other > p_dc) {
-        //                             p_dc = p_other;
-        //                             i_dc = w;
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //
-        //         // We have a doublecross - this is the max doublecross therefore the one we will
-        //         if (p_dc > best_p) {
-        //         }
-        //
-        //         allocations.push_back({
-        //             .item = items[i], .agent = agents[best_j], .price = p0, .utility = agents[best_j].utility(p0, q0)
-        //         });
-        //         agents.erase(agents.begin() + best_j);
-        //
-        //         // Update base
-        //         p0 = best_p;
-        //         q0 = q1;
-        //
-        //
-        //         auto rc = render_state->draw_allocations(allocations, i);
-        //         if (rc == RenderCommand::terminate) {
-        //             return allocations;
-        //         }
-        //     }
-        //     return allocations;
-        // }
+        static std::vector<Allocation<A, I> > align_left(std::vector<A> agents, std::vector<I> items, size_t i,
+                                                          RenderState<A, I> *render_state, double epsilon = 1e-5,
+                                                          int max_iter = 200) {
+            // start first alloc at 0.
+            double p0;
+            double q0;
+
+            if (i == 0) {
+                p0 = 0.0;
+                q0 = items[0].quality();
+            } else {
+                assert (i <= allocations.size());
+                q0 = items[i].quality();
+                p0 = indifferent_price(allocations[i - 1].agent, q0, allocations[i - 1].utility, epsilon, max_iter);
+            }
+
+            std::vector<Allocation<A, I> > allocations;
+            allocations.reserve(agents.size());
+
+            for (size_t i = 0; i < items.size() - 1; ++i) {
+                double q1 = items[i + 1].quality();
+                // For all remaining agents, calc steepest slope.
+                double best_p = DBL_MAX;
+                size_t best_j = -1;
+
+                for (size_t j = 0; j < agents.size(); ++j) {
+                    assert(agents[j].income() > p0);
+                    double u_0 = agents[j].utility(p0, q0);
+                    double next_p = indifferent_price(agents[j], q1, u_0, p0, agents[j].income(), epsilon, max_iter);
+                    assert(!std::isnan(next_p));
+                    if (next_p < best_p) {
+                        best_p = next_p;
+                        best_j = j;
+                    }
+                }
+
+                // Check if any previous agent prefers this allocation.
+                // If so, find the agent with the highest indifferent price.
+                double p_dc = -1.0;
+                size_t i_dc = 0;
+                if (allocations.size() > 1) {
+                    for (size_t w = 0; w < allocations.size() - 1; ++w) {
+                        if (allocations[w].agent.income() > best_p) {
+                            if (allocations[w].agent.utility(best_p, q1) > allocations[w].utility) {
+                                // !!DOUBLECROSS!! prefers next allocation (i.e. this IC crosses older IC), calc max price.
+                                double p_other = indifferent_price(allocations[w].agent, q1, allocations[w].utility,
+                                                                   best_p, epsilon, max_iter);
+
+                                if (!std::isnan(p_other) && p_other > p_dc) {
+                                    p_dc = p_other;
+                                    i_dc = w;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // We have a doublecross - this is the max doublecross therefore the one we will
+                if (p_dc > best_p) {
+                }
+
+                Allocation<A, I> a = {
+                    .item = items[i], .agent = agents[best_j], .price = p0, .utility = agents[best_j].utility(p0, q0)
+                };
+                assert(allocations.size() == i); // Make sure new agent will be at position i.
+                allocations.push_back(a);
+                // if (allocations.size() == i) {
+                //
+                // } else {
+                //     allocations[i] = a;
+                // }
+                agents.erase(agents.begin() + best_j);
+
+                // Update base
+                p0 = best_p;
+                q0 = q1;
+
+
+                auto rc = render_state->draw_allocations(allocations, i);
+                if (rc == RenderCommand::terminate) {
+                    return allocations;
+                }
+            }
+            return allocations;
+        }
 
         // Note: takes vectors as references, so need to clone them before calling.
         static void align_right(std::vector<A> &ags, std::vector<I> &items,
@@ -811,6 +837,7 @@ namespace peris {
                     });
                     agents.erase(agents.begin() + best_j);
 
+                    assert(i == allocations.size() - 1);
                     // Update base
                     p0 = best_p;
                     q0 = q1;
@@ -819,7 +846,7 @@ namespace peris {
                     ssize_t i_dc = -1;
                     if (allocations.size() > 1) {
                         for (size_t w = 0; w < allocations.size() - 1; ++w) {
-                            if (allocations[w].agent.income() > best_p) {
+                            if (allocations[w].agent.income() > p_dc) {
                                 if (allocations[w].agent.utility(p_dc, q1) > allocations[w].utility) {
                                     // !!DOUBLECROSS!! prefers next allocation (i.e. this IC crosses older IC), calc max price.
                                     double p_other = indifferent_price(allocations[w].agent, q1, allocations[w].utility, best_p, allocations[w].agent.income() - epsilon, epsilon, max_iter);
@@ -900,13 +927,16 @@ namespace peris {
                             // By removing this allocation, we still keep optimum allocation!
                             // However, agents are now forward allocated.
 
+                            double u0 = allocations[i_dc].utility;
                             // Determines a valid arrangement so that we can move the doublecrossing agent up.
-                            displace_phased(allocations, i_dc, i);
+                            displace_phased(allocations, i_dc, i, epsilon);
 
                             // Agent that has been shifted up:
                             allocations[i].set_price(p_dc);
                             // Update the price used for allocating the next agent.
                             p0 = p_dc;
+
+                            assert (std::abs(allocations[i].utility - u0) < epsilon);
 
                             // Restore the phase of the shifted up agent, because we have chosen the price to make it indifferent to before,
                             // and we know that the previous allocation was in phase (i_dc was indifferent to i_dc - 1), so that means that a higher up allocation is necessarily in phase (i is indifferent to i_dc - 1)
@@ -914,6 +944,16 @@ namespace peris {
                             allocations[i].out_of_phase = false;
 
                             allocations[i].doublecross = true;
+                        }
+                    }
+                }
+
+                if (!verify_solution(allocations, epsilon)) {
+                    std::cout << "Verif failed!" << std::endl;
+                    while (true) {
+                        auto rc = render_state->draw_allocations(allocations, i);
+                        if (rc == RenderCommand::terminate) {
+                            return;
                         }
                     }
                 }
@@ -1746,7 +1786,7 @@ namespace peris {
         ///
         /// @return True if the current allocation is valid; false otherwise.
         ///
-        bool verify_solution(const double epsilon = 1e-5) const {
+        static bool verify_solution(std::vector<Allocation<A, I>> &allocations, double epsilon = 1e-5) {
             bool valid = true;
             for (size_t i = 0; i < allocations.size(); ++i) {
                 double u = allocations[i].agent.utility(allocations[i].price, allocations[i].item.quality());
